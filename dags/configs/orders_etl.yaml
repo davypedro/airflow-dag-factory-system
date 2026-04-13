@@ -1,0 +1,152 @@
+# ============================================================
+#  DAG ETL — Pedidos
+# ============================================================
+#  Pipeline completo com limpeza, enriquecimento e validação.
+#
+#  Pipeline:
+#    extract_orders → dq_raw → transform_orders
+#    → dq_clean → load_orders → done
+# ============================================================
+
+dag:
+  id: orders_etl
+  description: "Pipeline de pedidos: CSV bruto → fact_orders no DWH"
+  schedule: "0 6 * * *"   # diário às 06:00
+  start_date: "2024-01-01"
+  catchup: false
+  max_active_runs: 1
+  tags:
+    - etl
+    - csv
+    - orders
+
+  default_args:
+    owner: data-engineering
+    retries: 2
+    retry_delay_minutes: 5
+    email_on_failure: false
+
+  doc_md: |
+    ## Pipeline de Pedidos
+
+    Lê o arquivo `data/orders.csv`, remove colunas internas,
+    filtra pedidos com valor positivo, calcula `net_amount`
+    e carrega em `fact_orders`.
+
+  tasks:
+    - id: extract_orders
+      type: extract
+      description: "Lê o CSV de pedidos"
+      config:
+        source_type: file
+        path: /opt/airflow/data/orders.csv
+        file_format: csv
+        read_options:
+          sep: ","
+          encoding: utf-8
+        output_xcom_key: raw_orders
+      depends_on: []
+
+    - id: dq_raw_orders
+      type: data_quality
+      description: "Valida dados brutos de pedidos"
+      config:
+        input_xcom_key: raw_orders
+        input_task_id: extract_orders
+        checks:
+          - name: "Ao menos 1 pedido"
+            type: row_count
+            min: 1
+            on_failure: raise
+
+          - name: "Campos obrigatórios presentes"
+            type: not_null
+            columns: [order_id, customer_id, order_date, status, total_amount]
+            on_failure: raise
+
+          - name: "order_id único"
+            type: unique
+            columns: [order_id]
+            on_failure: raise
+
+          - name: "Status válido"
+            type: value_in
+            column: status
+            values: [pending, confirmed, shipped, delivered, cancelled]
+            on_failure: raise
+      depends_on: [extract_orders]
+
+    - id: transform_orders
+      type: transform
+      description: "Limpa e enriquece pedidos"
+      config:
+        input_xcom_key: raw_orders
+        input_task_id: extract_orders
+        output_xcom_key: clean_orders
+        steps:
+          - type: drop_columns
+            columns: [internal_flag, legacy_id, _row_hash]
+
+          - type: fill_nulls
+            columns:
+              discount_amount: 0.0
+              shipping_amount: 0.0
+              notes: ""
+
+          - type: cast_types
+            mapping:
+              order_date: datetime
+              total_amount: float
+              discount_amount: float
+              shipping_amount: float
+
+          - type: filter_rows
+            query: "total_amount > 0"
+
+          - type: add_column
+            name: net_amount
+            expression: "total_amount - discount_amount"
+
+          - type: drop_duplicates
+            subset: [order_id]
+      depends_on: [dq_raw_orders]
+
+    - id: dq_clean_orders
+      type: data_quality
+      description: "Valida pedidos após transformação"
+      config:
+        input_xcom_key: clean_orders
+        input_task_id: transform_orders
+        checks:
+          - name: "net_amount não negativo"
+            type: value_range
+            column: net_amount
+            min: 0
+            on_failure: warn
+
+          - name: "Status de pedido válido"
+            type: value_in
+            column: status
+            values: [pending, confirmed, shipped, delivered, cancelled]
+            on_failure: raise
+      depends_on: [transform_orders]
+
+    - id: load_orders
+      type: load
+      description: "Carrega pedidos em fact_orders"
+      config:
+        destination_type: postgres
+        conn_id: postgres_dwh
+        table: fact_orders
+        schema: public
+        load_strategy: upsert
+        upsert_keys: [order_id]
+        batch_size: 500
+        input_xcom_key: clean_orders
+        input_task_id: transform_orders
+      depends_on: [dq_clean_orders]
+
+    - id: done
+      type: empty
+      description: "Pipeline de pedidos concluído"
+      depends_on: [load_orders]

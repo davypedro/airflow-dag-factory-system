@@ -1,0 +1,23 @@
+# ============================================================
+#  Dependências Python do projeto airflow-etl (Docker / CI)
+# ============================================================
+#  Usado dentro da imagem Docker (Python 3.11).
+#  Para desenvolvimento local use: requirements-dev.txt
+# ============================================================
+
+# ── Airflow providers ──────────────────────────────────────
+apache-airflow-providers-postgres==5.11.0
+apache-airflow-providers-mysql==5.6.1
+apache-airflow-providers-http==4.11.0
+apache-airflow-providers-amazon==8.23.0    # S3Hook
+
+# ── Data manipulation ──────────────────────────────────────
+pandas==2.2.2
+pyarrow==16.1.0                            # Parquet support
+
+# ── Database drivers ───────────────────────────────────────
+psycopg2-binary==2.9.9
+mysql-connector-python==9.0.0
+
+# ── Config / serialization ─────────────────────────────────
+pyyaml==6.0.1

@@ -1,0 +1,81 @@
+# ============================================================
+#  DAG ETL — Estoque
+# ============================================================
+#  Pipeline:
+#    extract_inventory → dq_inventory → load_inventory
+# ============================================================
+
+dag:
+  id: inventory_etl
+  description: "Sincroniza posição de estoque do CSV para o DWH"
+  schedule: "0 4 * * *"   # diário às 04:00 (antes dos outros pipelines)
+  start_date: "2024-01-01"
+  catchup: false
+  max_active_runs: 1
+  tags:
+    - etl
+    - csv
+    - inventory
+
+  default_args:
+    owner: data-engineering
+    retries: 1
+    retry_delay_minutes: 5
+    email_on_failure: false
+
+  tasks:
+    - id: extract_inventory
+      type: extract
+      description: "Lê posição atual do estoque"
+      config:
+        source_type: file
+        path: /opt/airflow/data/inventory.csv
+        file_format: csv
+        read_options:
+          sep: ","
+          encoding: utf-8
+        output_xcom_key: raw_inventory
+      depends_on: []
+
+    - id: dq_inventory
+      type: data_quality
+      description: "Valida consistência do estoque"
+      config:
+        input_xcom_key: raw_inventory
+        input_task_id: extract_inventory
+        checks:
+          - name: "Ao menos 1 produto no estoque"
+            type: row_count
+            min: 1
+            on_failure: raise
+
+          - name: "Campos obrigatórios"
+            type: not_null
+            columns: [product_id, sku, stock_quantity, warehouse]
+            on_failure: raise
+
+          - name: "SKU único por warehouse"
+            type: unique
+            columns: [product_id]
+            on_failure: warn
+
+          - name: "Estoque não negativo"
+            type: value_range
+            column: stock_quantity
+            min: 0
+            on_failure: raise
+      depends_on: [extract_inventory]
+
+    - id: load_inventory
+      type: load
+      description: "Carrega estoque em dim_inventory"
+      config:
+        destination_type: postgres
+        conn_id: postgres_dwh
+        table: dim_inventory
+        schema: public
+        load_strategy: replace
+        batch_size: 200
+        input_xcom_key: raw_inventory
+        input_task_id: extract_inventory
+      depends_on: [dq_inventory]

@@ -1,0 +1,123 @@
+# ============================================================
+#  DAG ETL — Itens de Pedido
+# ============================================================
+#  Pipeline:
+#    extract_items → dq_items → transform_items
+#    → load_items → done
+# ============================================================
+
+dag:
+  id: order_items_etl
+  description: "Carrega itens de pedido e calcula valor líquido por linha"
+  schedule: "30 6 * * *"   # diário às 06:30, após orders_etl
+  start_date: "2024-01-01"
+  catchup: false
+  max_active_runs: 1
+  tags:
+    - etl
+    - csv
+    - orders
+    - items
+
+  default_args:
+    owner: data-engineering
+    retries: 1
+    retry_delay_minutes: 5
+    email_on_failure: false
+
+  tasks:
+    - id: extract_items
+      type: extract
+      description: "Lê o CSV de itens de pedido"
+      config:
+        source_type: file
+        path: /opt/airflow/data/order_items.csv
+        file_format: csv
+        read_options:
+          sep: ","
+          encoding: utf-8
+        output_xcom_key: raw_items
+      depends_on: []
+
+    - id: dq_items
+      type: data_quality
+      description: "Valida integridade dos itens de pedido"
+      config:
+        input_xcom_key: raw_items
+        input_task_id: extract_items
+        checks:
+          - name: "Ao menos 1 item"
+            type: row_count
+            min: 1
+            on_failure: raise
+
+          - name: "Campos obrigatórios"
+            type: not_null
+            columns: [item_id, order_id, product_id, quantity, unit_price]
+            on_failure: raise
+
+          - name: "item_id único"
+            type: unique
+            columns: [item_id]
+            on_failure: raise
+
+          - name: "Quantidade positiva"
+            type: value_range
+            column: quantity
+            min: 1
+            on_failure: raise
+
+          - name: "Desconto entre 0% e 100%"
+            type: value_range
+            column: discount_pct
+            min: 0
+            on_failure: warn
+      depends_on: [extract_items]
+
+    - id: transform_items
+      type: transform
+      description: "Calcula valores líquidos por item"
+      config:
+        input_xcom_key: raw_items
+        input_task_id: extract_items
+        output_xcom_key: clean_items
+        steps:
+          - type: fill_nulls
+            columns:
+              discount_pct: 0.0
+
+          - type: cast_types
+            mapping:
+              item_id: int
+              product_id: int
+              quantity: int
+              unit_price: float
+              discount_pct: float
+
+          - type: add_column
+            name: line_total
+            expression: "unit_price * quantity * (1 - discount_pct / 100)"
+
+          - type: drop_duplicates
+            subset: [item_id]
+      depends_on: [dq_items]
+
+    - id: load_items
+      type: load
+      description: "Carrega itens em fact_order_items"
+      config:
+        destination_type: postgres
+        conn_id: postgres_dwh
+        table: fact_order_items
+        schema: public
+        load_strategy: upsert
+        upsert_keys: [item_id]
+        batch_size: 1000
+        input_xcom_key: clean_items
+        input_task_id: transform_items
+      depends_on: [transform_items]
+
+    - id: done
+      type: empty
+      description: "Pipeline de itens concluído"
+      depends_on: [load_items]

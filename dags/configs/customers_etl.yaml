@@ -1,0 +1,106 @@
+# ============================================================
+#  DAG ETL — Clientes
+# ============================================================
+#  Pipeline:
+#    extract_customers → dq_customers → transform_customers
+#    → load_customers
+# ============================================================
+
+dag:
+  id: customers_etl
+  description: "Importa cadastro de clientes do CSV para o DWH"
+  schedule: "@daily"
+  start_date: "2026-04-12"
+  catchup: false
+  max_active_runs: 1
+  tags:
+    - etl
+    - csv
+    - customers
+
+  default_args:
+    owner: data-engineering
+    retries: 1
+    retry_delay_minutes: 5
+    email_on_failure: false
+
+  tasks:
+    - id: extract_customers
+      type: extract
+      description: "Lê o CSV de clientes"
+      config:
+        source_type: file
+        path: /opt/airflow/data/customers.csv
+        file_format: csv
+        read_options:
+          sep: ","
+          encoding: utf-8
+        output_xcom_key: raw_customers
+      depends_on: []
+
+    - id: dq_customers
+      type: data_quality
+      description: "Valida integridade do cadastro de clientes"
+      config:
+        input_xcom_key: raw_customers
+        input_task_id: extract_customers
+        checks:
+          - name: "Ao menos 10 clientes"
+            type: row_count
+            min: 10
+            on_failure: raise
+
+          - name: "customer_id não nulo"
+            type: not_null
+            columns: [customer_id, email, full_name]
+            on_failure: raise
+
+          - name: "customer_id único"
+            type: unique
+            columns: [customer_id]
+            on_failure: raise
+
+          - name: "Estado válido (UF)"
+            type: value_in
+            column: state
+            values: [AC, AL, AP, AM, BA, CE, DF, ES, GO, MA, MT, MS, MG, PA, PB, PR, PE, PI, RJ, RN, RS, RO, RR, SC, SP, SE, TO]
+            on_failure: warn
+      depends_on: [extract_customers]
+
+    - id: transform_customers
+      type: transform
+      description: "Padroniza e enriquece dados de clientes"
+      config:
+        input_xcom_key: raw_customers
+        input_task_id: extract_customers
+        output_xcom_key: clean_customers
+        steps:
+          - type: fill_nulls
+            columns:
+              notes: ""
+              phone: ""
+
+          - type: cast_types
+            mapping:
+              customer_id: int
+              registration_date: datetime
+              is_active: bool
+
+          - type: filter_rows
+            query: "is_active == True"
+      depends_on: [dq_customers]
+
+    - id: load_customers
+      type: load
+      description: "Carrega clientes na tabela dim_customers"
+      config:
+        destination_type: postgres
+        conn_id: postgres_dwh
+        table: dim_customers
+        schema: public
+        load_strategy: upsert
+        upsert_keys: [customer_id]
+        batch_size: 100
+        input_xcom_key: clean_customers
+        input_task_id: transform_customers
+      depends_on: [transform_customers]
