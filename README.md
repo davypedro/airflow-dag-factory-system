@@ -196,10 +196,8 @@ Os pipelines simulam um e-commerce completo. Os horários foram ordenados para r
 |---|---|---|---|---|
 | `inventory_etl` | 04:00 diário | `data/inventory.csv` | `dim_inventory` | Posição de estoque por warehouse |
 | `customers_etl` | 05:00 diário | `data/customers.csv` | `dim_customers` | Clientes ativos com segmentação |
-| `example_csv_etl` | seg 06:00 | `data/products.csv` | `dim_products` | Catálogo de produtos com normalização |
 | `orders_etl` | 06:00 diário | `data/orders.csv` | `fact_orders` | Pedidos com remoção de colunas internas |
 | `order_items_etl` | 06:30 diário | `data/order_items.csv` | `fact_order_items` | Itens com cálculo de `line_total` |
-| `example_postgres_etl` | diário | Postgres (`postgres_source`) | `fact_orders` | Extração via SQL com transformações |
 
 ### Schema do DWH
 
