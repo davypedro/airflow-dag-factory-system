@@ -650,6 +650,13 @@ docker compose logs -f              # todos os serviços
 
 ---
 
+## Autor
+
+**Davy Pedro Moreira Porto**
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-dpedromoura-blue?logo=linkedin)](https://www.linkedin.com/in/dpedromoura/)
+
+---
+
 ## Licença
 
 MIT
