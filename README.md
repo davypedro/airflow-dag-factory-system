@@ -69,8 +69,6 @@ airflow-etl/
 ├── dags/
 │   ├── dag_factory.py              # Lê YAMLs e gera DAGs automaticamente
 │   └── configs/                    # ← Adicione seus pipelines aqui
-│       ├── example_csv_etl.yaml    # Produtos: CSV → dim_products
-│       ├── example_postgres_etl.yaml  # Pedidos: Postgres → DWH
 │       ├── customers_etl.yaml      # Clientes: CSV → dim_customers
 │       ├── orders_etl.yaml         # Pedidos: CSV → fact_orders
 │       ├── order_items_etl.yaml    # Itens: CSV → fact_order_items
